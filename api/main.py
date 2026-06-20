@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 import psycopg2
@@ -11,6 +12,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db.connection import get_db_connection
 
 app = FastAPI(title="Job Scheduler API")
+
+# Mount static directory for the dashboard UI
+import os as _os
+if not _os.path.exists("static"):
+    _os.makedirs("static")
+app.mount("/static", StaticFiles(directory="static", html=True), name="static")
 
 class JobSubmitRequest(BaseModel):
     type: str
