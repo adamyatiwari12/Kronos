@@ -4,48 +4,73 @@ import time
 import uuid
 import psycopg2
 import random
+import threading
+import signal
 from psycopg2.extras import RealDictCursor
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db.connection import get_db_connection
 
 WORKER_ID = f"worker-{uuid.uuid4().hex[:8]}"
+shutdown_event = threading.Event()
 
-def heartbeat(conn):
-    """Register or update worker heartbeat."""
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO worker_heartbeats (worker_id, last_seen, status, jobs_completed)
-            VALUES (%s, NOW(), 'active', 0)
-            ON CONFLICT (worker_id) 
-            DO UPDATE SET last_seen = NOW(), status = 'active';
-            """,
-            (WORKER_ID,)
-        )
-        conn.commit()
+def signal_handler(signum, frame):
+    print(f"\n[{WORKER_ID}] Received shutdown signal. Finishing current job and exiting...")
+    shutdown_event.set()
+
+def heartbeat_thread_func():
+    """Separate thread to update heartbeat every 5 seconds."""
+    while not shutdown_event.is_set():
+        try:
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO worker_heartbeats (worker_id, last_seen, status, jobs_completed)
+                        VALUES (%s, NOW(), 'active', 0)
+                        ON CONFLICT (worker_id) 
+                        DO UPDATE SET last_seen = NOW(), status = 'active';
+                        """,
+                        (WORKER_ID,)
+                    )
+                    conn.commit()
+        except Exception as e:
+            print(f"Heartbeat error: {e}")
+        
+        # Sleep for 5 seconds, checking shutdown_event
+        for _ in range(50):
+            if shutdown_event.is_set():
+                break
+            time.sleep(0.1)
 
 def claim_job(conn):
     """Claim the highest priority pending job."""
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        # Use SKIP LOCKED for concurrent worker safety
         cur.execute(
             """
-            UPDATE jobs
-            SET status = 'claimed', claimed_at = NOW(), worker_id = %s
-            WHERE id = (
-                SELECT id FROM jobs
-                WHERE status IN ('pending', 'retrying')
-                ORDER BY priority DESC, created_at ASC
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-            )
-            RETURNING id, type, payload, attempts, max_attempts;
-            """,
-            (WORKER_ID,)
+            SELECT * FROM jobs
+            WHERE status = 'pending'
+            AND attempts < max_attempts
+            ORDER BY priority DESC, created_at ASC
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1;
+            """
         )
         job = cur.fetchone()
-        conn.commit()
+        
+        if job:
+            cur.execute(
+                """
+                UPDATE jobs
+                SET status = 'claimed', worker_id = %s, claimed_at = NOW()
+                WHERE id = %s;
+                """,
+                (WORKER_ID, job['id'])
+            )
+            conn.commit()
+        else:
+            conn.commit()
+            
     return job
 
 def run_job(conn, job):
@@ -80,7 +105,6 @@ def run_job(conn, job):
                 "UPDATE jobs SET status = 'succeeded', finished_at = NOW() WHERE id = %s", 
                 (job_id,)
             )
-            
             cur.execute(
                 "UPDATE worker_heartbeats SET jobs_completed = jobs_completed + 1 WHERE worker_id = %s",
                 (WORKER_ID,)
@@ -90,33 +114,62 @@ def run_job(conn, job):
             
     except Exception as e:
         error_msg = str(e)
-        status = 'failed' if attempts >= job['max_attempts'] else 'retrying'
-        
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE jobs SET status = %s, finished_at = NOW(), error = %s WHERE id = %s",
-                (status, error_msg, job_id)
-            )
-            conn.commit()
-        print(f"[{WORKER_ID}] Job {job_id} {status}: {error_msg}")
+        if attempts < job['max_attempts']:
+            print(f"[{WORKER_ID}] Job {job_id} failed: {error_msg}. Retrying...")
+            with conn.cursor() as cur:
+                cur.execute("UPDATE jobs SET status = 'retrying', error = %s WHERE id = %s", (error_msg, job_id))
+                conn.commit()
+                
+            backoff = 2 ** attempts
+            print(f"[{WORKER_ID}] Waiting {backoff} seconds before re-queuing...")
+            time.sleep(backoff)
+            
+            with conn.cursor() as cur:
+                cur.execute("UPDATE jobs SET status = 'pending' WHERE id = %s", (job_id,))
+                conn.commit()
+        else:
+            print(f"[{WORKER_ID}] Job {job_id} failed: {error_msg}. Max attempts reached.")
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE jobs SET status = 'failed', finished_at = NOW(), error = %s WHERE id = %s",
+                    (error_msg, job_id)
+                )
+                conn.commit()
+
+def set_worker_dead():
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE worker_heartbeats SET status = 'dead' WHERE worker_id = %s", (WORKER_ID,))
+                conn.commit()
+    except Exception as e:
+        print(f"Error setting worker dead: {e}")
 
 def main_loop():
     print(f"Starting worker {WORKER_ID}")
     
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    hb_thread = threading.Thread(target=heartbeat_thread_func, daemon=True)
+    hb_thread.start()
+    
     with get_db_connection() as conn:
-        while True:
+        while not shutdown_event.is_set():
             try:
-                heartbeat(conn)
                 job = claim_job(conn)
                 
                 if job:
                     run_job(conn, job)
                 else:
-                    time.sleep(2)
+                    time.sleep(1)
             except psycopg2.Error as e:
                 print(f"Database error: {e}")
                 time.sleep(5)
                 conn.rollback()
+                
+    print(f"[{WORKER_ID}] Exiting cleanly. Setting status to dead.")
+    set_worker_dead()
 
 if __name__ == "__main__":
     main_loop()
