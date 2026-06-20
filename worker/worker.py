@@ -3,6 +3,7 @@ import sys
 import time
 import uuid
 import psycopg2
+import random
 from psycopg2.extras import RealDictCursor
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -57,8 +58,22 @@ def run_job(conn, job):
         conn.commit()
         
     try:
-        print(f"[{WORKER_ID}] Executing job {job_id} of type {job['type']}")
-        time.sleep(1)
+        job_type = job['type']
+        print(f"[{WORKER_ID}] Executing job {job_id} of type {job_type}")
+        
+        if job_type == 'send_email':
+            time.sleep(0.5)
+            print(f"[{WORKER_ID}] Payload: {job.get('payload')}")
+        elif job_type == 'resize_image':
+            time.sleep(random.uniform(1.0, 2.0))
+        elif job_type == 'generate_report':
+            time.sleep(random.uniform(2.0, 3.0))
+        elif job_type == 'flaky_task':
+            if random.random() < 0.4:
+                raise Exception("Random failure in flaky_task")
+            time.sleep(0.5)
+        else:
+            time.sleep(1)
         
         with conn.cursor() as cur:
             cur.execute(
