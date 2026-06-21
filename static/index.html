@@ -33,6 +33,23 @@
             <h3>Throughput (Jobs/sec) over last 60s</h3>
             <canvas id="throughputChart" height="80"></canvas>
         </div>
+
+        <div class="chart-container">
+            <h3>Dead Letter Queue (DLQ)</h3>
+            <table style="width: 100%; text-align: left; border-collapse: collapse;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #ccc;">
+                        <th style="padding: 8px;">ID (Orig)</th>
+                        <th style="padding: 8px;">Type</th>
+                        <th style="padding: 8px;">Failure Reason</th>
+                        <th style="padding: 8px;">Died At</th>
+                        <th style="padding: 8px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="dlq-body">
+                </tbody>
+            </table>
+        </div>
     </div>
 
     <script>
@@ -103,6 +120,49 @@
 
         fetchMetrics();
         setInterval(fetchMetrics, 3000);
+
+        async function fetchDLQ() {
+            try {
+                const res = await fetch('/dead-jobs');
+                const jobs = await res.json();
+                
+                const tbody = document.getElementById('dlq-body');
+                tbody.innerHTML = '';
+                
+                if (jobs.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 10px;">DLQ is empty.</td></tr>';
+                    return;
+                }
+                
+                jobs.forEach(job => {
+                    const tr = document.createElement('tr');
+                    tr.style.borderBottom = '1px solid #eee';
+                    tr.innerHTML = `
+                        <td style="padding: 8px;">${job.id} (${job.original_job_id})</td>
+                        <td style="padding: 8px;">${job.type}</td>
+                        <td style="padding: 8px; color: #e74c3c; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${job.failure_reason}">${job.failure_reason}</td>
+                        <td style="padding: 8px;">${new Date(job.died_at).toLocaleString()}</td>
+                        <td style="padding: 8px;"><button onclick="replayJob(${job.id})" style="background: #3498db; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer;">Replay</button></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (err) {
+                console.error("Error fetching DLQ:", err);
+            }
+        }
+
+        async function replayJob(id) {
+            try {
+                await fetch(`/dead-jobs/${id}/replay`, { method: 'POST' });
+                fetchDLQ();
+                fetchMetrics();
+            } catch (err) {
+                console.error("Error replaying job:", err);
+            }
+        }
+        
+        fetchDLQ();
+        setInterval(fetchDLQ, 5000);
     </script>
 </body>
 </html>

@@ -7,7 +7,8 @@ import random
 import threading
 import signal
 import concurrent.futures
-from psycopg2.extras import RealDictCursor
+import datetime
+from psycopg2.extras import RealDictCursor, Json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db.connection import get_db_connection, log_event
@@ -155,6 +156,40 @@ def execute_job(job):
             try:
                 with get_db_connection() as conn:
                     with conn.cursor() as cur:
+                        # Fetch attempt history
+                        cur.execute(
+                            """
+                            SELECT metadata->>'attempt' as attempt_num, metadata->>'error' as error, created_at as timestamp 
+                            FROM job_events 
+                            WHERE job_id = %s AND event_type IN ('failed', 'retried') 
+                            ORDER BY created_at ASC
+                            """, 
+                            (job_id,)
+                        )
+                        history_rows = cur.fetchall()
+                        attempt_history = []
+                        for row in history_rows:
+                            attempt_history.append({
+                                "attempt_num": int(row[0]) if row[0] else None,
+                                "error": row[1],
+                                "timestamp": str(row[2])
+                            })
+                        
+                        attempt_history.append({
+                            "attempt_num": attempts,
+                            "error": error_msg,
+                            "timestamp": datetime.datetime.now().isoformat()
+                        })
+                        
+                        # INSERT into dead_jobs
+                        cur.execute(
+                            """
+                            INSERT INTO dead_jobs (original_job_id, type, payload, failure_reason, last_error, attempt_history)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                            """,
+                            (job_id, job['type'], Json(job['payload']) if job.get('payload') else None, "Max attempts reached", error_msg, Json(attempt_history))
+                        )
+                        
                         cur.execute(
                             "UPDATE jobs SET status = 'failed', finished_at = NOW(), error = %s WHERE id = %s",
                             (error_msg, job_id)

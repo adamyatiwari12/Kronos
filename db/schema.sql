@@ -34,3 +34,14 @@ CREATE TABLE IF NOT EXISTS job_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id);
+
+CREATE TABLE IF NOT EXISTS dead_jobs (
+    id SERIAL PRIMARY KEY,
+    original_job_id INT NOT NULL,
+    type TEXT NOT NULL,
+    payload JSONB,
+    failure_reason TEXT,
+    last_error TEXT,
+    attempt_history JSONB,
+    died_at TIMESTAMPTZ DEFAULT NOW()
+);

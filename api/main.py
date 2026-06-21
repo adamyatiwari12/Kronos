@@ -98,6 +98,48 @@ def list_jobs(status: Optional[str] = None):
             jobs = cur.fetchall()
     return jobs
 
+@app.get("/dead-jobs")
+def list_dead_jobs():
+    """List all dead jobs."""
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT * FROM dead_jobs ORDER BY died_at DESC LIMIT 100;")
+            jobs = cur.fetchall()
+    return jobs
+
+@app.post("/dead-jobs/{dead_job_id}/replay", status_code=201)
+def replay_dead_job(dead_job_id: int):
+    """Replay a dead job by inserting it back into the jobs table."""
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # 1. Fetch the dead job
+            cur.execute("SELECT original_job_id, type, payload FROM dead_jobs WHERE id = %s;", (dead_job_id,))
+            dead_job = cur.fetchone()
+            
+            if not dead_job:
+                raise HTTPException(status_code=404, detail="Dead job not found")
+                
+            # 2. Insert into jobs table
+            cur.execute(
+                """
+                INSERT INTO jobs (type, payload, priority, max_attempts)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id, type, priority, status, created_at;
+                """,
+                (dead_job['type'], psycopg2.extras.Json(dead_job['payload']) if dead_job['payload'] else None, 5, 3)
+            )
+            new_job = cur.fetchone()
+            
+            # 3. Log event
+            log_event(conn, new_job['id'], 'submitted')
+            
+            # 4. Delete from dead_jobs
+            cur.execute("DELETE FROM dead_jobs WHERE id = %s;", (dead_job_id,))
+            
+            conn.commit()
+            
+    return new_job
+
 @app.get("/metrics")
 def get_metrics():
     """Return counts grouped by status, avg latency, and worker count."""
