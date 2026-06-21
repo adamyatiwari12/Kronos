@@ -76,10 +76,50 @@ if __name__ == "__main__":
     print(f"{'workers':>8} | {'jobs/sec':>10} | {'p50ms':>7} | {'p95ms':>7} | {'p99ms':>7}")
     print("-" * 52)
     
-    for workers in [1, 3, 5, 10]:
+    results = []
+    inflection_point = None
+    max_throughput = 0
+    
+    for workers in [1, 2, 4, 6, 8, 10]:
         try:
             jps, p50, p95, p99 = run_benchmark(workers, args.type)
             print(f"{workers:>8} | {jps:>10.1f} | {p50:>7.0f} | {p95:>7.0f} | {p99:>7.0f}")
+            
+            results.append({
+                "workers": workers,
+                "throughput": jps,
+                "p50_ms": p50,
+                "p95_ms": p95,
+                "p99_ms": p99
+            })
+            
+            if inflection_point is None:
+                if jps > max_throughput * 1.05:
+                    max_throughput = jps
+                elif workers > 1:
+                    inflection_point = workers
+                    
         except Exception as e:
             print(f"{workers:>8} | Error: {e}")
             break
+
+    inflection_cause = (
+        "Adding client workers stops increasing throughput likely due to DB connection "
+        "pool exhaustion and lock contention. The API limits its connection pool, and aggressive "
+        "polling by multiple clients combined with the backend worker locking the jobs table limits scaling."
+    )
+    
+    if inflection_point:
+        print(f"\nInflection point found at {inflection_point} workers.")
+        print(f"Cause: {inflection_cause}")
+
+    import json
+    import os
+    results_path = os.path.join(os.path.dirname(__file__), "results.json")
+    with open(results_path, "w") as f:
+        json.dump({
+            "results": results,
+            "inflection_point": inflection_point,
+            "inflection_cause": inflection_cause
+        }, f, indent=2)
+    print(f"Saved results to {results_path}")

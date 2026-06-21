@@ -35,6 +35,12 @@
         </div>
 
         <div class="chart-container">
+            <h3>Benchmark Throughput Curve</h3>
+            <canvas id="benchmarkChart" height="80"></canvas>
+            <div id="inflection-info" style="margin-top: 15px; font-size: 14px; color: #555;"></div>
+        </div>
+
+        <div class="chart-container">
             <h3>Dead Letter Queue (DLQ)</h3>
             <table style="width: 100%; text-align: left; border-collapse: collapse;">
                 <thead>
@@ -163,6 +169,49 @@
         
         fetchDLQ();
         setInterval(fetchDLQ, 5000);
+
+        async function fetchBenchmarkResults() {
+            try {
+                const res = await fetch('/benchmark/results');
+                if (!res.ok) return;
+                const data = await res.json();
+                
+                const labels = data.results.map(r => r.workers);
+                const throughputs = data.results.map(r => r.throughput);
+                
+                const ctx2 = document.getElementById('benchmarkChart').getContext('2d');
+                new Chart(ctx2, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Throughput (Jobs/sec)',
+                            data: throughputs,
+                            borderColor: '#9b59b6',
+                            backgroundColor: 'rgba(155, 89, 182, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.3
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        scales: {
+                            x: { title: { display: true, text: 'Client Workers (Concurrency)' } },
+                            y: { title: { display: true, text: 'Jobs/sec' }, beginAtZero: true }
+                        }
+                    }
+                });
+                
+                if (data.inflection_point) {
+                    document.getElementById('inflection-info').innerHTML = `<strong>Inflection point at ${data.inflection_point} workers.</strong><br/>${data.inflection_cause}`;
+                }
+            } catch (err) {
+                console.error("Error fetching benchmark results:", err);
+            }
+        }
+        
+        fetchBenchmarkResults();
     </script>
 </body>
 </html>

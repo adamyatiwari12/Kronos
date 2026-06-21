@@ -181,6 +181,17 @@ def replay_dead_job(dead_job_id: int):
             
     return new_job
 
+@app.get("/benchmark/results")
+def get_benchmark_results():
+    """Return the latest benchmark results."""
+    import os
+    import json
+    results_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmark", "results.json")
+    if not os.path.exists(results_path):
+        raise HTTPException(status_code=404, detail="Benchmark results not found")
+    with open(results_path, "r") as f:
+        return json.load(f)
+
 @app.get("/metrics")
 def get_metrics():
     """Return counts grouped by status, avg latency, and worker count."""
