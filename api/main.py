@@ -6,12 +6,46 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import sys
 import os
+import time
+import threading
+from fastapi.responses import JSONResponse
 
 # Add the parent directory to sys.path to be able to import db
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db.connection import get_db_connection, log_event
 
 app = FastAPI(title="Job Scheduler API")
+
+class TokenBucket:
+    def __init__(self, capacity: int, refill_rate: float):
+        self.capacity = capacity
+        self.tokens = capacity
+        self.refill_rate = refill_rate
+        self.last_refill = time.time()
+        self.lock = threading.Lock()
+
+    def consume(self, n: int = 1):
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_refill
+            
+            # Refill tokens
+            tokens_to_add = elapsed * self.refill_rate
+            self.tokens = min(self.capacity, self.tokens + tokens_to_add)
+            self.last_refill = now
+            
+            if self.tokens >= n:
+                self.tokens -= n
+                return True, 0
+            else:
+                # Calculate time until enough tokens
+                tokens_needed = n - self.tokens
+                wait_time_sec = tokens_needed / self.refill_rate
+                return False, int(wait_time_sec * 1000)
+
+RATE_LIMIT_CAPACITY = int(os.environ.get("RATE_LIMIT_CAPACITY", "100"))
+RATE_LIMIT_RPS = float(os.environ.get("RATE_LIMIT_RPS", "20"))
+job_rate_limiter = TokenBucket(capacity=RATE_LIMIT_CAPACITY, refill_rate=RATE_LIMIT_RPS)
 
 # Mount static directory for the dashboard UI
 import os as _os
@@ -28,6 +62,13 @@ class JobSubmitRequest(BaseModel):
 @app.post("/jobs", status_code=201)
 def submit_job(job_req: JobSubmitRequest):
     """Submit a new job."""
+    allowed, retry_after_ms = job_rate_limiter.consume(1)
+    if not allowed:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "rate limit exceeded", "retry_after_ms": retry_after_ms}
+        )
+        
     with get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
