@@ -9,7 +9,7 @@ import os
 
 # Add the parent directory to sys.path to be able to import db
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from db.connection import get_db_connection
+from db.connection import get_db_connection, log_event
 
 app = FastAPI(title="Job Scheduler API")
 
@@ -39,6 +39,7 @@ def submit_job(job_req: JobSubmitRequest):
                 (job_req.type, psycopg2.extras.Json(job_req.payload) if job_req.payload else None, job_req.priority, job_req.max_attempts)
             )
             new_job = cur.fetchone()
+            log_event(conn, new_job['id'], 'submitted')
             conn.commit()
     return new_job
 
@@ -61,6 +62,24 @@ def get_job_status(job_id: int):
         raise HTTPException(status_code=404, detail="Job not found")
         
     return job
+
+@app.get("/jobs/{job_id}/timeline")
+def get_job_timeline(job_id: int):
+    """Get the timeline of events for a specific job."""
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT event_type, worker_id, metadata, created_at as timestamp
+                FROM job_events
+                WHERE job_id = %s
+                ORDER BY created_at ASC;
+                """,
+                (job_id,)
+            )
+            events = cur.fetchall()
+            
+    return events
 
 @app.get("/jobs")
 def list_jobs(status: Optional[str] = None):

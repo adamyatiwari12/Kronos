@@ -22,3 +22,14 @@ CREATE TABLE IF NOT EXISTS worker_heartbeats (
     status worker_status DEFAULT 'active',
     jobs_completed INT DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS job_events (
+    id SERIAL PRIMARY KEY,
+    job_id INT REFERENCES jobs(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    worker_id TEXT,
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id);

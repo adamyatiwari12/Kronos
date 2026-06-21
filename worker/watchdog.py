@@ -4,7 +4,7 @@ import time
 import psycopg2
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from db.connection import get_db_connection
+from db.connection import get_db_connection, log_event
 
 HEARTBEAT_TIMEOUT_SECONDS = 15
 
@@ -35,13 +35,18 @@ def check_dead_workers(conn):
                 UPDATE jobs
                 SET status = 'pending', worker_id = NULL
                 WHERE status IN ('claimed', 'running')
-                AND worker_id = %s;
+                AND worker_id = %s
+                RETURNING id;
                 """,
                 (worker_id,)
             )
-            requeued_count = cur.rowcount
+            requeued_jobs = cur.fetchall()
+            requeued_count = len(requeued_jobs)
             
-            # Log the recovery event as specified
+            for job_row in requeued_jobs:
+                log_event(conn, job_row[0], 'requeued_by_watchdog', metadata={'old_worker_id': worker_id})
+            
+            # Log the recovery event
             print(f"Worker {worker_id} timed out. Re-queued {requeued_count} jobs.")
             
         conn.commit()

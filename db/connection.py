@@ -2,6 +2,7 @@ import os
 from psycopg2 import pool
 from contextlib import contextmanager
 from dotenv import load_dotenv
+from psycopg2.extras import Json
 
 load_dotenv()
 
@@ -38,3 +39,14 @@ def get_db_connection():
         yield conn
     finally:
         db_pool.putconn(conn)
+
+def log_event(conn, job_id, event_type, worker_id=None, metadata=None):
+    """Log an event for a job."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO job_events (job_id, event_type, worker_id, metadata)
+            VALUES (%s, %s, %s, %s);
+            """,
+            (job_id, event_type, worker_id, Json(metadata) if metadata else None)
+        )

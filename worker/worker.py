@@ -9,7 +9,7 @@ import signal
 from psycopg2.extras import RealDictCursor
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from db.connection import get_db_connection
+from db.connection import get_db_connection, log_event
 
 WORKER_ID = f"worker-{uuid.uuid4().hex[:8]}"
 shutdown_event = threading.Event()
@@ -68,6 +68,7 @@ def claim_job(conn):
                 (WORKER_ID, job['id'])
             )
             conn.commit()
+            log_event(conn, job['id'], 'claimed', worker_id=WORKER_ID)
         else:
             conn.commit()
             
@@ -81,6 +82,7 @@ def run_job(conn, job):
     with conn.cursor() as cur:
         cur.execute("UPDATE jobs SET status = 'running', attempts = %s WHERE id = %s", (attempts, job_id))
         conn.commit()
+    log_event(conn, job_id, 'started', worker_id=WORKER_ID, metadata={'attempt': attempts})
         
     try:
         job_type = job['type']
@@ -110,6 +112,7 @@ def run_job(conn, job):
                 (WORKER_ID,)
             )
             conn.commit()
+        log_event(conn, job_id, 'succeeded', worker_id=WORKER_ID)
         print(f"[{WORKER_ID}] Job {job_id} succeeded")
             
     except Exception as e:
@@ -119,6 +122,7 @@ def run_job(conn, job):
             with conn.cursor() as cur:
                 cur.execute("UPDATE jobs SET status = 'retrying', error = %s WHERE id = %s", (error_msg, job_id))
                 conn.commit()
+            log_event(conn, job_id, 'retried', worker_id=WORKER_ID, metadata={'error': error_msg, 'attempt': attempts})
                 
             backoff = 2 ** attempts
             print(f"[{WORKER_ID}] Waiting {backoff} seconds before re-queuing...")
@@ -135,6 +139,7 @@ def run_job(conn, job):
                     (error_msg, job_id)
                 )
                 conn.commit()
+            log_event(conn, job_id, 'failed', worker_id=WORKER_ID, metadata={'error': error_msg, 'attempt': attempts})
 
 def set_worker_dead():
     try:
