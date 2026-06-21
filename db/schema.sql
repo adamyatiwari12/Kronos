@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS worker_heartbeats (
     worker_id TEXT PRIMARY KEY,
     last_seen TIMESTAMPTZ DEFAULT NOW(),
     status worker_status DEFAULT 'active',
-    jobs_completed INT DEFAULT 0
+    jobs_completed INT DEFAULT 0,
+    active_threads INT DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS job_events (
