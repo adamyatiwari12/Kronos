@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: job_scheduler
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d job_scheduler"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/job_scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/job_scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      replicas: 3
+    command: ["python", "worker/worker.py"]
+
+  watchdog:
+    build: .
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/job_scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "worker/watchdog.py"]
+
+volumes:
+  pgdata:
