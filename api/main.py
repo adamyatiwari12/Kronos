@@ -58,6 +58,7 @@ class JobSubmitRequest(BaseModel):
     payload: Optional[Dict[str, Any]] = None
     priority: int = 5
     max_attempts: int = 3
+    depends_on: Optional[list[int]] = None
 
 @app.post("/jobs", status_code=201)
 def submit_job(job_req: JobSubmitRequest):
@@ -80,6 +81,14 @@ def submit_job(job_req: JobSubmitRequest):
                 (job_req.type, psycopg2.extras.Json(job_req.payload) if job_req.payload else None, job_req.priority, job_req.max_attempts)
             )
             new_job = cur.fetchone()
+            
+            if job_req.depends_on:
+                for dep_id in job_req.depends_on:
+                    cur.execute(
+                        "INSERT INTO job_dependencies (job_id, depends_on_job_id) VALUES (%s, %s)",
+                        (new_job['id'], dep_id)
+                    )
+            
             log_event(conn, new_job['id'], 'submitted')
             conn.commit()
     return new_job
@@ -121,6 +130,24 @@ def get_job_timeline(job_id: int):
             events = cur.fetchall()
             
     return events
+
+@app.get("/jobs/{job_id}/dependencies")
+def get_job_dependencies(job_id: int):
+    """Get the dependency tree with statuses for a specific job."""
+    with get_db_connection() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT d.depends_on_job_id as id, j.type, j.status, j.created_at
+                FROM job_dependencies d
+                JOIN jobs j ON d.depends_on_job_id = j.id
+                WHERE d.job_id = %s;
+                """,
+                (job_id,)
+            )
+            dependencies = cur.fetchall()
+            
+    return dependencies
 
 @app.get("/jobs")
 def list_jobs(status: Optional[str] = None):

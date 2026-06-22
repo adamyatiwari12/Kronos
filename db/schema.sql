@@ -45,3 +45,9 @@ CREATE TABLE IF NOT EXISTS dead_jobs (
     attempt_history JSONB,
     died_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS job_dependencies (
+    job_id INT REFERENCES jobs(id) ON DELETE CASCADE,
+    depends_on_job_id INT REFERENCES jobs(id) ON DELETE CASCADE,
+    PRIMARY KEY (job_id, depends_on_job_id)
+);

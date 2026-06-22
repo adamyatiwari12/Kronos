@@ -61,6 +61,11 @@ def claim_job(conn):
             SELECT * FROM jobs
             WHERE status = 'pending'
             AND attempts < max_attempts
+            AND NOT EXISTS (
+                SELECT 1 FROM job_dependencies d
+                JOIN jobs dep ON d.depends_on_job_id = dep.id
+                WHERE d.job_id = jobs.id AND dep.status != 'succeeded'
+            )
             ORDER BY priority DESC, created_at ASC
             FOR UPDATE SKIP LOCKED
             LIMIT 1;
