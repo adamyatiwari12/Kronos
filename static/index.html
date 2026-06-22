@@ -20,6 +20,11 @@
     <div class="container">
         <h1>Job Scheduler Dashboard</h1>
         
+        <div style="margin-bottom: 20px; display: flex; gap: 10px;">
+            <button onclick="submitTestJob()" style="background: #2ecc71; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">+ Submit 1 Job</button>
+            <button onclick="submitBulkJobs()" style="background: #e67e22; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; font-weight: bold; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">+ Submit 50 Jobs</button>
+        </div>
+        
         <div class="grid">
             <div class="card"><h3>Active Workers</h3><div class="value" id="workers">-</div></div>
             <div class="card"><h3>Avg Latency</h3><div class="value" id="latency">-</div></div>
@@ -59,6 +64,29 @@
     </div>
 
     <script>
+        async function submitTestJob() {
+            try {
+                await fetch('/jobs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'test_job', payload: { data: 'hello' } })
+                });
+                fetchMetrics();
+            } catch (err) {
+                console.error("Error submitting job:", err);
+            }
+        }
+
+        async function submitBulkJobs() {
+            for(let i=0; i<50; i++) {
+                fetch('/jobs', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: 'bulk_job', payload: { index: i } })
+                });
+            }
+        }
+
         const ctx = document.getElementById('throughputChart').getContext('2d');
         const dataPoints = Array(20).fill(0); // 20 points * 3s = 60s
         const chart = new Chart(ctx, {
