@@ -1,5 +1,12 @@
-CREATE TYPE job_status AS ENUM ('pending', 'claimed', 'running', 'succeeded', 'failed', 'retrying');
-CREATE TYPE worker_status AS ENUM ('active', 'dead');
+DO $$ 
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'job_status') THEN
+        CREATE TYPE job_status AS ENUM ('pending', 'claimed', 'running', 'succeeded', 'failed', 'retrying');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'worker_status') THEN
+        CREATE TYPE worker_status AS ENUM ('active', 'dead');
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS jobs (
     id SERIAL PRIMARY KEY,
