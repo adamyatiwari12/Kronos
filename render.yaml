@@ -36,5 +36,4 @@ services:
 databases:
   - name: job-scheduler-db
     databaseName: job_scheduler
-    user: postgres
     plan: free
